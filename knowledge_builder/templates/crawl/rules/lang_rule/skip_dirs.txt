@@ -1,0 +1,4 @@
+# Directory basenames to prune for <LANGUAGE_NAME> tooling: build output,
+# dependency caches, etc. (e.g. node_modules for JS, __pycache__ for Python).
+# One basename per line. Lines starting with # and blank lines are ignored.
+# Leave empty if the language needs nothing beyond rules/common/skip_dirs.

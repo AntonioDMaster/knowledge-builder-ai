@@ -1,0 +1,9 @@
+.astro
+.cjs
+.js
+.jsx
+.mjs
+.svelte
+.ts
+.tsx
+.vue

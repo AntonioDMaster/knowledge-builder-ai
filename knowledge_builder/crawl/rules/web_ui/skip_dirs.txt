@@ -1,0 +1,9 @@
+.netlify
+.next
+.nuxt
+.output
+.parcel-cache
+.svelte-kit
+.turbo
+.vercel
+node_modules

@@ -1,0 +1,9 @@
+.mypy_cache
+.nox
+.pytest_cache
+.ruff_cache
+.tox
+.venv
+__pycache__
+env
+venv

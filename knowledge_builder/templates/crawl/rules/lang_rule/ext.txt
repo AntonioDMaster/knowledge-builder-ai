@@ -1,0 +1,3 @@
+# Source file extensions for <LANGUAGE_NAME>.
+# One extension per line, including the leading dot (e.g. .py).
+# Lines starting with # and blank lines are ignored.

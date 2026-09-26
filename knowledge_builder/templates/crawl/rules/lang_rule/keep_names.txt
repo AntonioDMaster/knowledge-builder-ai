@@ -1,0 +1,4 @@
+# Extensionless filenames that ARE source for <LANGUAGE_NAME>
+# (e.g. Rakefile for Ruby, CMakeLists.txt for C/C++).
+# One filename per line. Lines starting with # and blank lines are ignored.
+# Leave empty if the language has none beyond rules/common/keep_names.

@@ -1,0 +1,7 @@
+.c
+.cc
+.cpp
+.cxx
+.h
+.hh
+.hpp

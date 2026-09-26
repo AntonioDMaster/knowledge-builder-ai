@@ -1,0 +1,42 @@
+# markup/docs
+.adoc
+.htm
+.html
+.md
+.mdx
+.rst
+.txt
+
+# config
+.cfg
+.conf
+.ini
+.json
+.toml
+.xml
+.yaml
+.yml
+
+# styles
+.css
+.less
+.sass
+.scss
+.styl
+
+# templates
+.ejs
+.erb
+.handlebars
+.hbs
+.j2
+.jinja
+.liquid
+
+# schema/IDL
+.gql
+.graphql
+.proto
+.sql
+.thrift
+
