@@ -1,0 +1,5 @@
+# Compaction backend for Python sources (see crawl/README.md, "Smart
+# compaction"). One value: auto | brace | indent | plain | ast.
+# ast = exact stdlib syntax tree (falls back to a structural backend on
+# syntax errors); the rest are language-agnostic structural scans.
+ast

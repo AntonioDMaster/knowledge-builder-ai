@@ -1,0 +1,9 @@
+# Smart-crawl compaction backend for this language (see crawl/README.md,
+# "Smart compaction"). One value: auto | brace | indent | plain | ast.
+#   auto   structural detection (trailing braces vs colon+indent blocks)
+#   brace  C-family lexical brace scan
+#   indent colon/indent block scan (Python-like, YAML-like)
+#   plain  no block structure, outline only
+#   ast    exact backend (Python only; falls back on syntax errors)
+# Missing file = auto.
+auto

@@ -1,0 +1,5 @@
+# Import / dependency line regexes for smart_crawl in THIS language
+# (optional; unioned over rules/common/smart_imports.txt). One regex
+# per line, re.search against each stripped source line; invalid
+# patterns are skipped with a warning, never a crash.
+# ^\s*include\b

@@ -1,0 +1,6 @@
+# Entry-point / hotspot name patterns for smart_crawl scoring: regexes
+# (case-insensitive) matched against the bare declaration name; matches
+# get +35 priority when the token budget forces the detail section to
+# choose which declarations to expand. Unioned with
+# rules/<lang>/smart_entry.txt.
+^(main|cli|run|start|serve|handle|dispatch|route|register|init|setup|load|save|parse|build|create|validate|authenticate|connect|execute|process|__init__|index|handler|worker|app)$

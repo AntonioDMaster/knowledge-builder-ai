@@ -1,0 +1,15 @@
+# Import / dependency line patterns for smart_crawl: one regex per line,
+# matched with re.search against each stripped source line; first 80
+# matches are listed in the digest's Imports section. Invalid regexes
+# are skipped with a warning in the digest header (never crash the
+# crawl). Unioned with rules/<lang>/smart_imports.txt.
+^\s*import\b
+^\s*from\s+[\w.]+\s+import\b
+^\s*#include\b
+^\s*use\s+
+^\s*package\s+[\w.]
+^\s*mod\s+[\w]
+^\s*export\b.*\bfrom\b
+^\s*require\b
+^\s*library\b
+^\s*extern\s+crate\b

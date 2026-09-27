@@ -1,0 +1,23 @@
+# Declaration keywords for smart_crawl's structural backends: a block
+# whose header contains one of these words is indexed as a declaration,
+# with the keyword as `kind` and the next word as the name.
+# Literal words (regex-escaped), one per line. Unioned with per-language
+# rules/<lang>/smart_decls.txt. Keep conservative: a word here can only
+# add index entries, never remove any.
+class
+interface
+struct
+enum
+trait
+impl
+namespace
+module
+function
+func
+fn
+def
+type
+protocol
+extension
+record
+object

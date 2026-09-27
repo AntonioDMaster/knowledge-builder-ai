@@ -1,0 +1,5 @@
+# Control-flow keywords for smart_crawl in THIS language (optional;
+# unioned over rules/common/smart_control.txt). Blocks whose header
+# starts with one of these words are not indexed as declarations, and
+# the words are filtered from call lists.
+# loop_forever

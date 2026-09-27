@@ -17,12 +17,14 @@ File: src/main.py
 2. [Adding a new language rule](#adding-a-new-language-rule)
 3. [`.crawlignore`](#crawlignore)
 4. [`.crawlwanted`](#crawlwanted)
-5. [Runtime rule changes](#runtime-rule-changes)
+5. [Smart compaction](#smart-compaction)
+6. [Runtime rule changes](#runtime-rule-changes)
 
 ## Crawl behavior
 
 Entry point: `crawl(root, **kwargs)` in `_crawl.py`, built on
-`list_files(root, **kwargs)`.
+`list_files(root, **kwargs)` (the same filters, but returns only the
+surviving paths -- a read-only planning API with no content reads).
 
 The pipeline, in order:
 
@@ -51,9 +53,12 @@ The pipeline, in order:
    - `exclude`: gitignore-style pattern list; matches are dropped.
      Applied after `include`, so you can whitelist a subtree and carve
      exceptions out of it.
-6. **Size cap.** `max_file_bytes` (default 500,000) drops oversized
-   files such as generated dumps and minified bundles. A `.crawlwanted`
-   match bypasses the cap.
+6. **Size cap.** `max_file_bytes` (default 500,000) caps oversized
+   files such as generated dumps and minified bundles. By default
+   (`smart=True`) a file above the cap is not dropped: it is rendered
+   as a compacted digest instead (see section 5) -- except
+   `.crawlwanted` matches, which are always included in full. Pass
+   `smart=False` to restore the plain drop behavior.
 
 Surviving files are read as UTF-8 by `safe_read`, which returns `None`
 on decode or permission errors so one bad file cannot abort the walk.
@@ -80,7 +85,8 @@ a directory and not descended) — on symlink-heavy trees the count can
 slightly exceed `find -type f`, which counts regular files only.
 
 All filters are keyword arguments (`keep_ext`, `keep_names`,
-`skip_dirs`, `max_file_bytes`, `include`, `exclude`) and all default
+`skip_dirs`, `max_file_bytes`, `include`, `exclude`, plus `smart` --
+on by default -- and `smart_budget` for compaction) and all default
 sets are frozensets, so they compose:
 
 ```python
@@ -104,7 +110,7 @@ order.
 data is only scanned and parsed on first access to `rules.LANGUAGES` or
 the `DEFAULT_*` aggregates (module `__getattr__`, PEP 562), and
 `pathspec` imports only when a crawl function actually runs. Rule data
-is cached after first access; see section 5 for re-reading it at
+is cached after first access; see section 6 for re-reading it at
 runtime.
 
 ## Adding a new language rule
@@ -133,6 +139,9 @@ To add a language, e.g. `foobar`:
    | `skip_dirs.txt` | directory basenames to prune (`node_modules`) | `SKIP_DIRS` |
    | `keep_names.txt` | extensionless source filenames (`Rakefile`) | `KEEP_NAMES` |
 
+   The template also ships optional `smart_*.txt` files (compaction
+   tuning, all-commented so they start inert); see section 5.
+
 3. Optionally adjust the `<LANGUAGE_NAME>` placeholders in the
    directory's `__init__.py` docstring. The code itself stays
    untouched -- it just loads the `.txt` files via
@@ -143,7 +152,7 @@ Nothing else needs to change: the new rule shows up in
 `rules.DEFAULT_KEEP_EXT`, `rules.DEFAULT_SKIP_DIR` and
 `rules.DEFAULT_KEEP_NAMES`. If the crawl module was already imported
 and its caches populated, call `knowledge_builder.crawl.refresh()` to
-pick the change up -- see section 5.
+pick the change up -- see section 6.
 
 Conventions:
 
@@ -259,6 +268,95 @@ Precedence summary for a single path, from strongest to weakest:
 4. default rules: `skip_dirs`, `keep_ext` / `keep_names`,
    `max_file_bytes`
 
+## Smart compaction
+
+`smart_crawl` (in `_smart.py`, re-exported from the package) turns one
+large source file into a small **navigational index** -- an
+"architecture digest" of declarations, signatures, call/write edges
+and control-flow notes, bounded by a token budget -- so a crawl
+includes files the size cap would otherwise drop (this is the default
+behavior; `smart=False` opts out):
+
+```python
+from knowledge_builder.crawl import crawl, smart_crawl, compact_text
+
+crawl("repo/")                                 # oversized files -> digests (default)
+crawl("repo/", smart=False)                    # drop oversized files instead
+crawl("repo/", smart_budget=3000)              # per-file digest token budget
+print(smart_crawl("huge_generated.py"))        # direct use: one file -> digest
+compact_text(source_string, ext=".c")          # text variant (tests, experiments)
+```
+
+The digest states what it is ("an index, NOT source code"), names the
+backend used, and gives original-file line ranges for every entry, so
+omitted semantics can be reread rather than guessed.
+
+### Common core, structural only
+
+The compaction algorithm is one **language-agnostic core** that never
+hardcodes language keywords:
+
+1. **Mask** comments and string literal contents, preserving every
+   character position (`//`, `/* */`, `#` unless attached to an
+   identifier, `'` `"` `` ` `` strings, `r"` raw strings).
+2. **Detect** structure: trailing `{` lines vs colon-ended lines with
+   deeper-indent followers.
+3. **Index blocks** with a backend chosen structurally (or pinned by
+   tuning data):
+   - `brace` -- C-family brace-stack scan; headers between top-level
+     delimiters, plausibility by shape (`identifier(`), name from the
+     last identifier before the parameter list;
+   - `indent` -- colon/indent blocks (Python-like, YAML-like), with
+     `@decorator` capture;
+   - `plain` -- no block structure: keyword outline plus head/tail
+     clips, and it says so;
+   - `ast` -- exact Python syntax tree (stdlib), selected for `.py`
+     via tuning data, falling back to structural backends on syntax
+     errors.
+4. **Assemble** under a budget (`smart_budget` tokens, default 6000;
+   char cap = budget x 3) with graceful degradation: metadata and
+   imports first, then the one-line declaration map (complete when it
+   fits, otherwise truncated with an explicit "N declarations not
+   indexed" note), then detail blocks for the highest-scoring
+   declarations, then a coverage line (`Indexed X/Y; detailed Z/X`).
+   The truncation note and coverage line always fit -- 150 chars are
+   reserved for them -- so a budget-pressed digest always says what
+   was omitted.
+
+Every language in `rules/` (and every unknown one) gets this same
+core; scoring prefers entry-point names, type-like kinds, hubs with
+many calls/writes, and size.
+
+### Per-language tuning (optional `.txt`)
+
+Semantic hints are **data**, never code. The core reads:
+
+| File | Content | Effect |
+|---|---|---|
+| `smart_backend.txt` | one of `auto brace indent plain ast` | pins the backend (language dir wins over `common/`) |
+| `smart_decls.txt` | declaration keywords | blocks whose header contains one are indexed, keyword as `kind` |
+| `smart_control.txt` | control-flow keywords | such blocks are skipped; words filtered from call lists; feed notes |
+| `smart_imports.txt` | regexes (one per line) | matching lines listed as imports |
+| `smart_entry.txt` | name regexes (case-insensitive) | scoring boost for entry points |
+
+> **Detailed reference:** [SMART_RULES.md](SMART_RULES.md) documents
+> every rule file line-by-line -- matching semantics, the shipped
+> defaults, scoring math, and how to debug a digest.
+
+Defaults live in `rules/common/smart_*.txt`; a language adds or
+overrides by dropping the same files into `rules/<lang>/` (the
+template ships commented examples). Declaration and control words
+union over `common/`; the backend value from the language directory
+wins. Invalid regex lines are skipped with a warning printed in the
+digest header -- tuning data can degrade a digest, never crash a
+crawl. `refresh()` picks up edits like any other rule data.
+
+Known limitations, by design: the lexical backends cannot understand
+macros (C/C++/Rust), TypeScript-only syntax, or Scala `case class`
+(headers starting with a control word); headers containing `=` are
+treated as initializers, not declarations. The digest header always
+names the backend so readers know how much to trust it.
+
 ## Runtime rule changes
 
 Rule data is cached after first access: `rules.LANGUAGES`, the
@@ -280,12 +378,14 @@ kc.crawl("repo/")  # default filters pick up the change
 ```
 
 `refresh()` clears every cache layer (package re-exports, the `crawl`
-module's lazy `DEFAULT_*` attributes, and the `rules` package's
-caches), purges the loaded rule subpackages from `sys.modules`, and
-lets the next access re-read the `.txt` files. References already held
-in local variables elsewhere stay stale; only fresh lookups see the
-refreshed data.
+module's lazy `DEFAULT_*` attributes, the `rules` package's caches,
+and `_smart.py`'s tuning and extension maps), purges the loaded rule
+subpackages from `sys.modules`, and lets the next access re-read the
+`.txt` files. References already held in local variables elsewhere
+stay stale; only fresh lookups see the refreshed data.
 
-Related files: `_crawl.py` (implementation), `rules/` (filter rule
-data, `rules/_loader.py` is the `.txt` loader),
-`templates/crawl/rules/lang_rule/` (new-language template).
+Related files: `_crawl.py` (implementation), `_smart.py` (source
+compaction core), [SMART_RULES.md](SMART_RULES.md) (compaction tuning
+reference), `rules/` (filter rule data, `rules/_loader.py` is
+the `.txt` loader), `templates/crawl/rules/lang_rule/`
+(new-language template).

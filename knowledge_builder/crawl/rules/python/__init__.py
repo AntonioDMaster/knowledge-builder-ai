@@ -4,4 +4,4 @@ from .._loader import load_rule
 
 KEEP_EXT, SKIP_DIRS, KEEP_NAMES = load_rule(__file__)
 
-__all__ = ["KEEP_EXT", "SKIP_DIRS", "KEEP_NAMES"]
+__all__ = ["KEEP_EXT", "KEEP_NAMES", "SKIP_DIRS"]

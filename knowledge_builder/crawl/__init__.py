@@ -23,6 +23,9 @@ _LAZY_EXPORTS = {
     "DEFAULT_KEEP_NAMES": "_crawl",
     "DEFAULT_SKIP_DIR": "_crawl",
     "DEFAULT_MAX_FILE_BYTES": "_crawl",
+    "smart_crawl": "_smart",
+    "compact_text": "_smart",
+    "DEFAULT_SMART_BUDGET": "_smart",
 }
 
 # names cached by rules/__init__.py and _crawl.py module __getattr__s
@@ -33,7 +36,7 @@ _RULE_CACHES = (
     "DEFAULT_KEEP_NAMES",
 )
 
-__all__ = [*_LAZY_EXPORTS, "refresh"]  # pyright: ignore[reportUnsupportedDunderAll]
+__all__ = [*_LAZY_EXPORTS, "refresh"]  # pyright: ignore[reportUnsupportedDunderAll]  # noqa: PLE0604
 
 
 def __getattr__(name):
@@ -56,9 +59,10 @@ def refresh():
     """Forget cached rule data so rules/ changes are picked up.
 
     Later LANGUAGES / DEFAULT_* accesses and list_files() / crawl() calls
-    rebuild from the current .txt files. Data already held in local
-    variables elsewhere stays stale; importlib.reload alone is not enough
-    (cached __getattr__ values survive it).
+    rebuild from the current .txt files; _smart tuning and extension maps
+    rebuild the same way. Data already held in local variables elsewhere
+    stays stale; importlib.reload alone is not enough (cached __getattr__
+    values survive it).
     """
     pkg = __name__
     for name in _LAZY_EXPORTS:
@@ -82,6 +86,10 @@ def refresh():
                 f"{pkg}.rules."
             ):
                 delattr(rules_mod, name)
+
+    smart_mod = sys.modules.get(f"{pkg}._smart")
+    if smart_mod is not None:
+        smart_mod._clear_caches()  # smart tuning + ext->language maps
 
     prefix = f"{pkg}.rules."
     for mod_name in [n for n in sys.modules if n.startswith(prefix)]:

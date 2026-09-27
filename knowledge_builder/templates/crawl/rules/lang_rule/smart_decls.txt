@@ -1,0 +1,6 @@
+# Declaration keywords for smart_crawl in THIS language (optional;
+# unioned over rules/common/smart_decls.txt). Literal words, one per
+# line; a block whose header contains one is indexed as a declaration
+# with the keyword as `kind` and the next word as the name.
+# class
+# function

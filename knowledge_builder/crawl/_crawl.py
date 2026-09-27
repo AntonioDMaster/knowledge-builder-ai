@@ -2,6 +2,8 @@
 
 Keeps common source extensions, skips noise, and honors `.crawlignore` /
 `.crawlwanted` files (gitignore syntax) in the crawl target; see README.md.
+Files above `max_file_bytes` are compacted into navigational digests by
+default (`smart=False` drops them instead).
 """
 
 import os
@@ -121,12 +123,15 @@ def _filtered_walk(
     max_file_bytes=DEFAULT_MAX_FILE_BYTES,
     include=None,
     exclude=None,
+    smart=True,
 ):
     """Walk the tree; return (paths that pass the filters, total files on disk).
 
     Filter args left unset default to the rules/ aggregates at call time;
     include / exclude are gitignore-style pattern lists applied after the
-    default filters. No content read.
+    default filters. No content read. smart=True (default) keeps files
+    above max_file_bytes for compaction at render time; smart=False drops
+    them. .crawlwanted matches always bypass the cap.
     """
     keep_ext = _resolve_default(keep_ext, "DEFAULT_KEEP_EXT")
     skip_dirs = _resolve_default(skip_dirs, "DEFAULT_SKIP_DIR")
@@ -167,6 +172,7 @@ def _filtered_walk(
                 max_file_bytes
                 and wanted is not True
                 and os.path.getsize(path) > max_file_bytes
+                and not smart
             ):
                 continue
             out.append(path)
@@ -233,23 +239,77 @@ class CrawlResult:
         )
 
 
-def _render(root, files):
+def _render(root, files, *, smart=True, max_file_bytes=DEFAULT_MAX_FILE_BYTES, smart_budget=None):
     parts = []
+    # re-checked so .crawlwanted matches stay included in full (never
+    # compacted) even in smart mode
+    wanted_rules = _load_patterns(root, ".crawlwanted") if smart else None
     for path in files:
-        text = safe_read(path)
+        rel = os.path.relpath(path, root)
+        size = os.path.getsize(path)
+        text = None
+        if (
+            smart
+            and max_file_bytes
+            and size > max_file_bytes
+            and _pattern_decision(rel, wanted_rules) is not True
+        ):
+            # lazy: _smart loads only when compaction actually runs
+            from . import _smart
+
+            try:
+                digest = _smart.smart_crawl(
+                    path, budget=smart_budget or _smart.DEFAULT_SMART_BUDGET
+                )
+                text = (
+                    f"[SMART CRAWL: {size} bytes exceeds max_file_bytes="
+                    f"{max_file_bytes}; navigational digest follows -- reread "
+                    f"the original file for exact semantics]\n{digest}"
+                )
+            except (OSError, ValueError) as exc:
+                text = (
+                    f"[file omitted: {size} bytes exceeds max_file_bytes="
+                    f"{max_file_bytes} and compaction failed: {exc}]"
+                )
+        else:
+            text = safe_read(path)
         if text is None:
             continue
-        rel = os.path.relpath(path, root)
         parts.append(f"{'=' * 60}\nFile: {rel}\n{'=' * 60}\n{text}\n")
     return "\n".join(parts)
 
 
 def crawl(root, **kwargs):
-    """Walk root, read every kept file, return one concatenated string with file headers."""
-    return _render(root, list_files(root, **kwargs))
+    """Walk root, read every kept file, return one concatenated string with file headers.
+
+    smart=True (default) renders files above max_file_bytes as compacted
+    navigational digests; smart_budget sets the per-file digest token
+    budget.
+    """
+    smart = kwargs.pop("smart", True)
+    smart_budget = kwargs.pop("smart_budget", None)
+    return _render(
+        root,
+        list_files(root, smart=smart, **kwargs),
+        smart=smart,
+        max_file_bytes=kwargs.get("max_file_bytes", DEFAULT_MAX_FILE_BYTES),
+        smart_budget=smart_budget,
+    )
 
 
 def crawl_with_stats(root, **kwargs):
     """Like crawl(), but return a CrawlResult with file, char and token counts."""
-    kept, total = _filtered_walk(root, **kwargs)
-    return CrawlResult(_render(root, kept), file_count=len(kept), total_files=total)
+    smart = kwargs.pop("smart", True)
+    smart_budget = kwargs.pop("smart_budget", None)
+    kept, total = _filtered_walk(root, smart=smart, **kwargs)
+    return CrawlResult(
+        _render(
+            root,
+            kept,
+            smart=smart,
+            max_file_bytes=kwargs.get("max_file_bytes", DEFAULT_MAX_FILE_BYTES),
+            smart_budget=smart_budget,
+        ),
+        file_count=len(kept),
+        total_files=total,
+    )

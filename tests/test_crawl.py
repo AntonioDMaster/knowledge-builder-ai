@@ -80,20 +80,22 @@ def test_skip_dirs_prunes_recursively(tree):
 
 def test_max_file_bytes_cap(tree):
     root, _ = tree
-    got = kept(root)
+    got = kept(root, smart=False)
     assert "big.py" not in got
     # small files unaffected
     assert "src/app.py" in got
+    # smart (the default) keeps the oversized file for compaction instead
+    assert "big.py" in kept(root)
 
 
 def test_total_vs_kept_counts(tree):
     root, files = tree
-    result = crawl_with_stats(root)  # pyright: ignore[reportCallIssue]
+    result = crawl_with_stats(root, smart=False)  # pyright: ignore[reportCallIssue]
     # total_files is the find(1)-style count of ALL files on disk,
     # including those in pruned dirs (node_modules/, __pycache__/, build/)
     assert result.total_files == len(files)
     assert 0 < result.file_count < result.total_files
-    assert result.file_count == len(list_files(root))  # pyright: ignore[reportCallIssue]
+    assert result.file_count == len(list_files(root, smart=False))  # pyright: ignore[reportCallIssue]
 
 
 def test_total_files_excludes_git_metadata(tmp_path):

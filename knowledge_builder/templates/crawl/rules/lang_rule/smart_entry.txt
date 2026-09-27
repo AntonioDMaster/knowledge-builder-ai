@@ -1,0 +1,4 @@
+# Entry-point / hotspot name regexes for smart_crawl scoring in THIS
+# language (optional; unioned over rules/common/smart_entry.txt),
+# matched case-insensitively against bare declaration names.
+# ^serve$

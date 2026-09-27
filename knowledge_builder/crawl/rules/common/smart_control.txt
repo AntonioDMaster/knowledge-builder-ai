@@ -1,0 +1,44 @@
+# Control-flow keywords for smart_crawl: blocks whose header STARTS with
+# one of these words are not indexed as declarations, names here are
+# filtered out of call lists, and lines containing them feed the
+# control/return notes. Unioned with rules/<lang>/smart_control.txt.
+# Note: no `async`/`unsafe` here on purpose -- they prefix real
+# declarations in Python (`async def`) and Rust (`unsafe impl`).
+if
+else
+elif
+elseif
+for
+foreach
+while
+switch
+case
+do
+try
+except
+rescue
+ensure
+catch
+finally
+return
+throw
+throws
+match
+select
+defer
+go
+await
+yield
+break
+continue
+with
+using
+lock
+synchronized
+loop
+unless
+until
+repeat
+guard
+when
+new
