@@ -71,9 +71,10 @@ For size statistics, `crawl_with_stats(root, **kwargs)` returns a
 the filters), and `.total_files` — a find(1)-style count of every file
 on disk under the root (excluding `.git` metadata; pruned directories
 like `.venv/` ARE included). The token estimate comes from a
-zero-dependency heuristic (`estimate_tokens`: word + punctuation
-regex, roughly 10–15% off real BPE counts for English prose; it
-undercounts on non-Latin scripts and code-heavy text). Ignored files
+zero-dependency heuristic (`estimate_tokens`, defined in `_tokens.py`
+and shared with the smart compaction's coverage footer: word +
+punctuation regex, roughly 10–15% off real BPE counts for English
+prose; it undercounts on non-Latin scripts and code-heavy text). Ignored files
 are never read, so they contribute nothing to the token estimate. Use
 it for context-window capacity checks, not billing. The result object
 also unpacks as a tuple:
@@ -314,11 +315,13 @@ hardcodes language keywords:
      via tuning data, falling back to structural backends on syntax
      errors.
 4. **Assemble** under a budget (`smart_budget` tokens, default 6000;
-   char cap = budget x 3) with graceful degradation: metadata and
-   imports first, then the one-line declaration map (complete when it
-   fits, otherwise truncated with an explicit "N declarations not
-   indexed" note), then detail blocks for the highest-scoring
-   declarations, then a coverage line (`Indexed X/Y; detailed Z/X`).
+   enforced as a char cap = budget x 3) with graceful degradation:
+   metadata and imports first, then the one-line declaration map
+   (complete when it fits, otherwise truncated with an explicit "N
+   declarations not indexed" note), then detail blocks for the
+   highest-scoring declarations, then a coverage line
+   (`Indexed X/Y; detailed Z/X`), whose "approx tokens" figure uses
+   the same `estimate_tokens` regex as `CrawlResult.token_count`.
    The truncation note and coverage line always fit -- 150 chars are
    reserved for them -- so a budget-pressed digest always says what
    was omitted.

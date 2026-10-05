@@ -23,9 +23,11 @@ import hashlib
 import os
 import re
 
+from ._tokens import estimate_tokens
+
 __all__ = ["DEFAULT_SMART_BUDGET", "compact_text", "smart_crawl"]
 
-DEFAULT_SMART_BUDGET = 6000  # approximate output tokens; char cap = budget * 3
+DEFAULT_SMART_BUDGET = 6000  # approximate output tokens; enforced as char cap = budget * 3
 
 _MIN_BUDGET = 300
 _RULES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rules")
@@ -798,7 +800,8 @@ def _assemble(name, raw, lang, backend_name, warning, tuning, data, budget):
     text = "".join(parts)
     add(
         f"\n## Coverage\nIndexed {len(selected)}/{len(items)} declarations; "
-        f"detailed {details}/{len(selected)}. approx tokens: {(len(text) + 2) // 3}\n",
+        f"detailed {details}/{len(selected)}. "
+        f"approx tokens: {estimate_tokens(text)}\n",
         hard=True,
     )
     return "".join(parts)

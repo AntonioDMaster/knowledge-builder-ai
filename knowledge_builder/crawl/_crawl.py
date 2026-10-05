@@ -7,9 +7,10 @@ default (`smart=False` drops them instead).
 """
 
 import os
-import re
 
 import pathspec
+
+from ._tokens import estimate_tokens
 
 __all__ = [
     "DEFAULT_KEEP_EXT",
@@ -192,17 +193,6 @@ def safe_read(path):
     except UnicodeDecodeError, PermissionError:
         return None
 
-
-_WORD_RE = re.compile(r"\w+|[^\w\s]", re.UNICODE)
-
-
-def estimate_tokens(text):
-    """Estimate LLM context tokens (word + punctuation regex).
-
-    ~10-15% off real BPE for English prose; undercounts code and
-    non-Latin text. For capacity checks, not billing.
-    """
-    return len(_WORD_RE.findall(text))
 
 
 class CrawlResult:
