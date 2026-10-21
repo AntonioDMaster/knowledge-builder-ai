@@ -1,0 +1,72 @@
+{
+  "_help": {
+    "directions": [
+      "This file configures the LLMs knowledge-builder may use. Nothing is",
+      "configured yet: language_models below is the empty base configuration,",
+      "and the CLIs keep reporting 'not configured' until it is filled in.",
+      "",
+      "This _help section is documentation only: the program ignores it on load",
+      "and drops it when it rewrites the file. Keep extra notes at this top",
+      "level too -- inside openai_compatible every key is a provider name, so",
+      "comments cannot live there.",
+      "",
+      "OPENAI-COMPATIBLE PROVIDER (OpenAI, Groq, OpenRouter, Mistral,",
+      "llama.cpp server, LM Studio, vLLM, ...):",
+      "1. Copy openai_compatible_example below into the openai_compatible",
+      "   section of language_models, renaming its key to your provider name",
+      "   (that name is what the --provider flag takes).",
+      "2. api_url is the endpoint root that serves /chat/completions, usually",
+      "   ending in /v1 (for example https://api.openai.com/v1).",
+      "3. The API key never goes in this file: api_key_title names an entry",
+      "   in the OS secret store. Store the key under that title with:",
+      "   python -m knowledge_builder.storage_cli set <api_key_title>",
+      "   Omit api_key_title for keyless local servers.",
+      "4. available_models lists the endpoint's models: name is the model id",
+      "   the endpoint expects; display_name, max_tokens, reasoning_effort and",
+      "   capabilities are optional.",
+      "",
+      "OLLAMA (local server, no API key):",
+      "1. Copy ollama_example below into language_models as the 'ollama' block,",
+      "   or edit the one already there.",
+      "2. api_url is the server address (http://127.0.0.1:11434); do not add",
+      "   /v1, the program appends it automatically.",
+      "3. Model names are exactly what 'ollama list' shows, tag included (for",
+      "   example llama3.2:3b). context_window, auto_discover and the",
+      "   supports_* model flags are optional and informational.",
+      "",
+      "The CLIs pick the first provider and its first model by default;",
+      "override with --provider and --model."
+    ],
+    "openai_compatible_example": {
+      "openai": {
+        "api_url": "https://api.openai.com/v1",
+        "api_key_title": "openai",
+        "available_models": [
+          {
+            "name": "gpt-4o",
+            "display_name": "GPT-4o",
+            "max_tokens": 16384
+          }
+        ]
+      }
+    },
+    "ollama_example": {
+      "api_url": "http://127.0.0.1:11434",
+      "available_models": [
+        {
+          "name": "llama3.2:3b",
+          "display_name": "Llama 3.2 3B",
+          "max_tokens": 32768
+        }
+      ]
+    }
+  },
+  "language_models": {
+    "openai_compatible": {},
+    "ollama": {
+      "api_url": "http://127.0.0.1:11434",
+      "auto_discover": false,
+      "available_models": []
+    }
+  }
+}
