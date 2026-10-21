@@ -1,12 +1,13 @@
 """CLI entry point: python -m knowledge_builder.storage_cli <command> <name>
 
 Commands (the secret is prompted for, never taken from argv):
-  set <name>     store a secret in the OS keychain
+  set <name>     store a secret (OS keychain, or auth.json when the
+                 machine has no keychain access tool)
   get <name>     print the stored secret
   has <name>     exit 0 if a secret is stored under the name, 1 if not
   delete <name>  delete the stored secret
 
-Exit codes: 0 success, 1 nothing stored under the name or the keychain
+Exit codes: 0 success, 1 nothing stored under the name or the store
 failed, 2 bad usage. Status goes to stderr; only `get` writes to stdout
 (the secret itself).
 """

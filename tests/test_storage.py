@@ -1,18 +1,23 @@
 """Tests for the credentials storage package. subprocess.run is mocked
-inside _keychain -- no keychain is touched, no secret leaves the process.
-sys.platform is pinned per test so the darwin and windows paths run
-anywhere; the real CredReadW success path cannot run off-Windows, so
-Windows coverage is the struct, the not-found paths via a fake advapi32,
-and the write call shape.
+inside _keychain -- no keychain is touched, no secret leaves the process
+(fallback tests redirect auth.json into tmp_path). sys.platform is
+pinned per test so the darwin and windows paths run anywhere; the real
+CredReadW success path cannot run off-Windows, so Windows coverage is
+the struct, the not-found paths via a fake advapi32, and the write call
+shape. The `pin` fixture also pins keychain availability so keychain
+tests pass on hosts without the tools; file-fallback tests force the
+backend off or exercise the real shutil.which detection.
 """
 
 import ctypes
+import json
+import os
 import sys
 
 import pytest
 
 from knowledge_builder import storage, storage_cli
-from knowledge_builder.storage import _keychain
+from knowledge_builder.storage import _filestore, _keychain
 
 
 class _Proc:
@@ -53,7 +58,28 @@ def run(monkeypatch):
 
 @pytest.fixture
 def pin(monkeypatch):
-    return lambda name: monkeypatch.setattr(sys, "platform", name)
+    """Pin sys.platform; keychain platforms are also pinned available so
+    the tests do not depend on the host's tools."""
+    def pin_platform(name):
+        monkeypatch.setattr(sys, "platform", name)
+        if name in ("linux", "darwin", "win32"):
+            monkeypatch.setattr(_keychain, "_keychain_available", lambda: True)
+    return pin_platform
+
+
+@pytest.fixture
+def authfile(tmp_path, monkeypatch):
+    """auth.json redirected into a fresh tmp directory; returns its Path."""
+    path = tmp_path / "kb-ai" / "auth.json"
+    monkeypatch.setattr(_filestore, "auth_file_path", lambda: str(path))
+    return path
+
+
+@pytest.fixture
+def fallback(monkeypatch, authfile):
+    """Force the auth.json backend on, host tools aside."""
+    monkeypatch.setattr(_keychain, "_keychain_available", lambda: False)
+    return authfile
 
 
 # ------------------------------------------------------------------ linux
@@ -299,15 +325,212 @@ def test_bad_label_and_account_are_value_error(run):
     assert not rec.calls
 
 
-def test_unsupported_platform_raises(run, pin):
+def test_backend_table_rejects_unknown_platform(pin):
+    # safety net only: the public API routes unknown platforms to the
+    # file store before _backend() is ever consulted
     pin("freebsd")
-    rec = run()
-    for call in (storage.get_secret, storage.delete_secret):
-        with pytest.raises(storage.SecretStoreError, match="no credentials backend"):
-            call("kb:x")
-    with pytest.raises(storage.SecretStoreError, match="no credentials backend"):
-        storage.set_secret("kb:x", "s")
+    with pytest.raises(storage.SecretStoreError, match="no OS credentials backend"):
+        _keychain._backend()
+
+
+# ---------------------------------------------------------- fallback store
+
+def test_auth_file_path_linux_xdg_default(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.setenv("HOME", "/home/user")
+    assert _filestore.auth_file_path() == \
+        "/home/user/.local/share/knowledge-builder-ai/auth.json"
+
+
+def test_auth_file_path_linux_xdg_data_home_wins(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", "/xdg/data")
+    assert _filestore.auth_file_path() == "/xdg/data/knowledge-builder-ai/auth.json"
+
+
+def test_auth_file_path_linux_relative_xdg_ignored(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", "relative/path")
+    monkeypatch.setenv("HOME", "/home/user")
+    assert _filestore.auth_file_path() == \
+        "/home/user/.local/share/knowledge-builder-ai/auth.json"
+
+
+def test_auth_file_path_darwin(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setenv("HOME", "/Users/u")
+    assert _filestore.auth_file_path() == \
+        "/Users/u/Library/Application Support/knowledge-builder-ai/auth.json"
+
+
+def test_auth_file_path_windows_localappdata(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", "C:/Users/u/AppData/Local")
+    assert _filestore.auth_file_path() == \
+        "C:/Users/u/AppData/Local/knowledge-builder-ai/auth.json"
+
+
+def test_auth_file_path_windows_home_fallback(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    assert _filestore.auth_file_path() == os.path.join(
+        os.path.expanduser("~"), "AppData", "Local",
+        "knowledge-builder-ai", "auth.json")
+
+
+def test_linux_missing_secret_tool_uses_file(run, monkeypatch, authfile):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(_keychain.shutil, "which", lambda name: None)
+    rec = run()  # any subprocess call would fail the test
+    storage.set_secret("kb:x", "sekret")
+    assert storage.get_secret("kb:x") == "sekret"
     assert not rec.calls
+    assert json.loads(authfile.read_text()) == {"kb:x": "sekret"}
+
+
+def test_linux_present_secret_tool_prefers_keychain(run, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(_keychain.shutil, "which",
+                        lambda name: "/usr/bin/secret-tool")
+    rec = run(_Proc(stdout="sekret"))
+    assert storage.get_secret("kb:x") == "sekret"
+    assert rec.calls[0][0] == ["secret-tool", "lookup", "service", "kb:x"]
+
+
+def test_mac_missing_security_uses_file(run, monkeypatch, authfile):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(_keychain.shutil, "which", lambda name: None)
+    rec = run()
+    storage.set_secret("kb:x", "sekret")
+    assert storage.get_secret("kb:x") == "sekret"
+    assert not rec.calls
+
+
+def test_unknown_platform_falls_back_to_file(run, monkeypatch, authfile):
+    monkeypatch.setattr(sys, "platform", "freebsd")  # no tool table entry
+    rec = run()
+    storage.set_secret("kb:x", "sekret")
+    assert storage.get_secret("kb:x") == "sekret"
+    assert not rec.calls
+
+
+def test_fallback_missing_file_is_a_clean_miss(fallback):
+    assert storage.get_secret("kb:x") is None
+    assert storage.delete_secret("kb:x") is False
+    assert not fallback.parent.exists()  # reads create nothing
+
+
+def test_fallback_creates_file_owner_only(fallback):
+    storage.set_secret("kb:x", "sekret")
+    assert json.loads(fallback.read_text()) == {"kb:x": "sekret"}
+    if os.name == "posix":
+        assert os.stat(fallback).st_mode & 0o777 == 0o600
+
+
+def test_fallback_creates_directory_owner_only(fallback):
+    storage.set_secret("kb:x", "sekret")
+    assert fallback.parent.is_dir()
+    if os.name == "posix":
+        assert os.stat(fallback.parent).st_mode & 0o077 == 0
+
+
+def test_fallback_rewrites_loose_file_as_owner_only(fallback):
+    fallback.parent.mkdir()
+    fallback.write_text("{}")
+    os.chmod(fallback, 0o644)
+    storage.set_secret("kb:x", "sekret")
+    assert json.loads(fallback.read_text()) == {"kb:x": "sekret"}
+    if os.name == "posix":
+        # the rename swaps the inode, so the 0o644 did not survive
+        assert os.stat(fallback).st_mode & 0o777 == 0o600
+
+
+def test_fallback_upsert(fallback):
+    storage.set_secret("kb:x", "one")
+    storage.set_secret("kb:x", "two")
+    storage.set_secret("kb:y", "three")
+    assert storage.get_secret("kb:x") == "two"
+    assert json.loads(fallback.read_text()) == {"kb:x": "two", "kb:y": "three"}
+
+
+def test_fallback_delete(fallback):
+    storage.set_secret("kb:x", "sekret")
+    assert storage.delete_secret("kb:x") is True
+    assert storage.get_secret("kb:x") is None
+    assert json.loads(fallback.read_text()) == {}
+    assert storage.delete_secret("kb:x") is False
+
+
+def test_fallback_corrupt_json_is_error_not_miss(fallback):
+    fallback.parent.mkdir()
+    fallback.write_text("not json at all")
+    with pytest.raises(storage.SecretStoreError, match="auth.json"):
+        storage.get_secret("kb:x")
+
+
+def test_fallback_non_object_json_is_error(fallback):
+    fallback.parent.mkdir()
+    fallback.write_text('["kb:x"]')
+    with pytest.raises(storage.SecretStoreError, match="JSON object"):
+        storage.get_secret("kb:x")
+
+
+def test_fallback_non_string_value_is_error(fallback):
+    fallback.parent.mkdir()
+    fallback.write_text('{"kb:x": 5}')
+    with pytest.raises(storage.SecretStoreError, match="JSON object"):
+        storage.get_secret("kb:x")
+
+
+def test_fallback_unusable_path_is_error_not_miss(monkeypatch, tmp_path, fallback):
+    blocker = tmp_path / "blocker"  # a regular file where the directory belongs
+    blocker.write_text("x")
+    monkeypatch.setattr(_filestore, "auth_file_path",
+                        lambda: str(blocker / "auth.json"))
+    with pytest.raises(storage.SecretStoreError):
+        storage.get_secret("kb:x")
+    with pytest.raises(storage.SecretStoreError):
+        storage.set_secret("kb:x", "sekret")
+
+
+def test_fallback_write_failure_is_error(monkeypatch, fallback):
+    fallback.parent.mkdir()
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+    monkeypatch.setattr(_filestore.tempfile, "mkstemp", boom)
+    with pytest.raises(storage.SecretStoreError, match="cannot write"):
+        storage.set_secret("kb:x", "sekret")
+
+
+def test_fallback_unreadable_store_is_error_not_miss(fallback):
+    fallback.mkdir(parents=True)  # a directory where the file belongs: open() fails
+    with pytest.raises(storage.SecretStoreError, match="cannot read"):
+        storage.get_secret("kb:x")
+
+
+def test_fallback_validation_precedes_file_io(fallback):
+    for call in (storage.get_secret, storage.delete_secret):
+        with pytest.raises(ValueError):
+            call("")
+    with pytest.raises(ValueError):
+        storage.set_secret("kb:x", "a\nb")
+    assert not fallback.parent.exists()
+
+
+def test_fallback_drops_label_and_account(fallback):
+    storage.set_secret("kb:x", "sekret", label="My Label", account="acc")
+    assert json.loads(fallback.read_text()) == {"kb:x": "sekret"}
+
+
+def test_cli_round_trip_on_file_fallback(monkeypatch, authfile, capsys):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(_keychain.shutil, "which", lambda name: None)
+    storage.set_secret("kb:x", "sekret")
+    assert storage_cli.main(["get", "kb:x"]) == 0
+    assert capsys.readouterr().out == "sekret\n"
+    assert storage_cli.main(["has", "kb:y"]) == 1
 
 
 # ----------------------------------------------------------------- package

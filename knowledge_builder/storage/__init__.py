@@ -1,13 +1,14 @@
 """Credentials storage: each OS's native secret store behind one tiny
 zero-dependency API -- Secret Service via secret-tool on Linux, Keychain
-via the security CLI on macOS, Credential Manager via ctypes on Windows.
-Lazy PEP 562 re-exports like the crawl and llm packages; nothing is
-cached between calls, so there is no refresh().
+via the security CLI on macOS, Credential Manager via ctypes on Windows
+-- with a restricted auth.json file as the fallback for machines with no
+keychain access tool. Lazy PEP 562 re-exports like the crawl and llm
+packages; nothing is cached between calls, so there is no refresh().
 
-Secrets never pass through argv, environment, or disk in the clear, and
-there is no fallback store: an unreachable keychain is a
-SecretStoreError, never a silent downgrade. Seeding is interactive
-(`python -m knowledge_builder.storage_cli set <name>`). See README.md.
+Secrets never pass through argv or the environment; a keychain that
+exists but fails at runtime is a SecretStoreError, never a silent
+downgrade. Seeding is interactive (`python -m
+knowledge_builder.storage_cli set <name>`). See README.md.
 """
 
 import importlib

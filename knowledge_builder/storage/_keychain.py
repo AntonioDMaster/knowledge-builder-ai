@@ -1,20 +1,26 @@
-"""Zero-dependency credentials storage over the OS's native secret store.
+"""Zero-dependency credentials storage: the OS's native secret store
+when its access tool is at hand, a restricted auth.json file when it is
+not.
 
-Linux: the Secret Service (GNOME Keyring, KeePassXC, KWallet, ...) via
+Linux: the Secret Service (GNOME Keyring, KeePassXC, Kwallet, ...) via
 the secret-tool CLI -- the only non-Python dependency in the stack.
 macOS: the Keychain via the built-in security CLI. Windows: the
 Credential Manager via ctypes (CredReadW/CredWriteW/CredDeleteW), so
-nothing outside CPython there either.
+nothing outside CPython there either. When the platform's tool is
+missing (secret-tool, security) or the platform has no backend at all,
+the _filestore module takes over; a tool that exists but fails at
+runtime (no Secret Service on D-Bus, locked keychain) stays a loud
+SecretStoreError, never a fallback.
 
-A secret never passes through argv, the environment, or disk in the
-clear: Linux and macOS receive it through a stdin pipe, Windows writes
-it in-process. There is no fallback store and no environment read -- an
-unreachable keychain is a SecretStoreError, never a silent downgrade.
+A secret never passes through argv or the environment. In the keychain
+backends it never touches disk either; the file backend is plaintext by
+design, for machines with no keychain to talk to.
 """
 
 from __future__ import annotations
 
 import functools
+import shutil
 import subprocess
 import sys
 
@@ -38,9 +44,10 @@ _CRED_MAX_BLOB_BYTES = 5 * 512  # CRED_MAX_CREDENTIAL_BLOB_SIZE; utf-16 halves i
 
 
 class SecretStoreError(RuntimeError):
-    """Backend failure: missing CLI tool, unreachable secret service,
-    keychain error, or a write that did not verify. Bad arguments are a
-    ValueError instead, raised before any store I/O."""
+    """Backend failure: unreachable secret service, keychain error, a
+    write that did not verify, or (in the file fallback) an auth.json that
+    cannot be read or written. Bad arguments are a ValueError instead,
+    raised before any store I/O."""
 
 
 def _validate_text(value, what):
@@ -271,8 +278,9 @@ def _win_delete(name):
 # ------------------------------------------------------------------ public
 
 def _backend():
-    """(get, set, delete) for this platform, resolved at call time (tests
-    pin the platform by patching sys.platform)."""
+    """(get, set, delete) for this platform's OS-native store, resolved
+    at call time (tests pin the platform by patching sys.platform). Only
+    consulted once _keychain_available() says the tool is there."""
     platform = sys.platform
     if platform == "linux":
         return _linux_get, _linux_set, _linux_delete
@@ -281,28 +289,50 @@ def _backend():
     if platform == "win32":
         return _win_get, _win_set, _win_delete
     raise SecretStoreError(
-        f"no credentials backend for platform {platform!r}: only the OS "
-        "stores are used, there is no fallback")
+        f"no OS credentials backend for platform {platform!r}")
+
+
+def _keychain_available():
+    """True when this platform's keychain access tool is at hand: the
+    Credential Manager ships inside Windows itself, Linux needs the
+    secret-tool CLI and macOS the security CLI on PATH. False routes the
+    public API to the auth.json file store instead."""
+    if sys.platform == "win32":
+        return True
+    tool = {"linux": "secret-tool", "darwin": "security"}.get(sys.platform)
+    return tool is not None and shutil.which(tool) is not None
+
+
+def _file_backend():
+    """The _filestore module, imported lazily so a machine with a keychain
+    never pays for it."""
+    from . import _filestore
+    return _filestore
 
 
 def get_secret(name):
     """The secret stored under `name`, or None when nothing is. Reads the
-    OS-native store only; raises SecretStoreError when the store itself
-    is unreachable (missing tool, no Secret Service on D-Bus, keychain
-    error)."""
+    OS-native store, or auth.json when this machine has no keychain
+    access tool; raises SecretStoreError when the store itself is
+    unreachable (no Secret Service on D-Bus, keychain error, unreadable
+    auth.json)."""
     _validate_text(name, "secret name")
-    get, _, _ = _backend()
-    return get(name)
+    if _keychain_available():
+        get, _, _ = _backend()
+        return get(name)
+    return _file_backend().get(name)
 
 
 def set_secret(name, secret, *, label=None, account=None):
     """Store `secret` under `name`, replacing anything already stored
-    there. The secret travels by stdin pipe (Linux, macOS) or in-process
-    (Windows) -- never through argv, environment, or disk.
+    there. In the keychain backends the secret travels by stdin pipe
+    (Linux, macOS) or in-process (Windows); in the file fallback it is
+    written to auth.json, owner-only. Never through argv or environment.
 
     `label` is display metadata (default: the name); `account` is
-    macOS/Windows metadata (default: "knowledge-builder"). Values a
-    backend cannot carry raise ValueError before any store I/O: null or
+    macOS/Windows metadata (default: "knowledge-builder"). The file
+    fallback has no metadata slots and drops both. Values a backend
+    cannot carry raise ValueError before any store I/O: null or
     newline characters everywhere, whitespace on macOS (the security
     CLI is fed through its stdin command line), and secrets longer than
     1280 characters on Windows (the credential blob cap).
@@ -311,13 +341,18 @@ def set_secret(name, secret, *, label=None, account=None):
     _validate_text(secret, "secret")
     label = _validate_text(label or name, "label")
     account = _validate_text(account or _DEFAULT_ACCOUNT, "account")
-    _, setter, _ = _backend()
-    setter(name, secret, label, account)
+    if _keychain_available():
+        _, setter, _ = _backend()
+        setter(name, secret, label, account)
+    else:
+        _file_backend().set(name, secret)
 
 
 def delete_secret(name):
     """Delete the item stored under `name`. True when something was
     deleted, False when nothing was stored under the name."""
     _validate_text(name, "secret name")
-    _, _, delete = _backend()
-    return delete(name)
+    if _keychain_available():
+        _, _, delete = _backend()
+        return delete(name)
+    return _file_backend().delete(name)
