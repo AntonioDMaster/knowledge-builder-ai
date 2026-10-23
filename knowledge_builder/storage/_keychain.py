@@ -1,21 +1,7 @@
-"""Zero-dependency credentials storage: the OS's native secret store
-when its access tool is at hand, a restricted auth.json file when it is
-not.
-
-Linux: the Secret Service (GNOME Keyring, KeePassXC, Kwallet, ...) via
-the secret-tool CLI -- the only non-Python dependency in the stack.
-macOS: the Keychain via the built-in security CLI. Windows: the
-Credential Manager via ctypes (CredReadW/CredWriteW/CredDeleteW), so
-nothing outside CPython there either. When the platform's tool is
-missing (secret-tool, security) or the platform has no backend at all,
-the _filestore module takes over; a tool that exists but fails at
-runtime (no Secret Service on D-Bus, locked keychain) stays a loud
-SecretStoreError, never a fallback.
-
-A secret never passes through argv or the environment. In the keychain
-backends it never touches disk either; the file backend is plaintext by
-design, for machines with no keychain to talk to.
-"""
+"""OS-native secret store backends plus the public API: secret-tool
+(Linux), the security CLI (macOS), CredWriteW via ctypes (Windows). The
+auth.json fallback follows availability, never masks a broken keychain;
+a secret never passes through argv or the environment. See README.md."""
 
 from __future__ import annotations
 
@@ -31,30 +17,25 @@ __all__ = [
     "set_secret",
 ]
 
-# display metadata defaults; account is used by macOS and Windows only,
-# the Linux attribute namespace is the bare name
+# account is macOS/Windows metadata only; the Linux attribute namespace is the bare name
 _DEFAULT_ACCOUNT = "knowledge-builder"
 
 _MAC_NOT_FOUND = 44  # security(1): "The specified item could not be found in the keychain"
 _WIN_ERROR_NOT_FOUND = 1168
 _CRED_TYPE_GENERIC = 1
-# 2 = CRED_PERSIST_LOCAL_MACHINE (on disk); 1 would be memory-only for the session
+# on disk; 1 would be memory-only for the session
 _CRED_PERSIST_LOCAL_MACHINE = 2
 _CRED_MAX_BLOB_BYTES = 5 * 512  # CRED_MAX_CREDENTIAL_BLOB_SIZE; utf-16 halves it in characters
 
 
 class SecretStoreError(RuntimeError):
-    """Backend failure: unreachable secret service, keychain error, a
-    write that did not verify, or (in the file fallback) an auth.json that
-    cannot be read or written. Bad arguments are a ValueError instead,
-    raised before any store I/O."""
+    """Store failure (unreachable backend, failed verify, unreadable
+    auth.json); bad arguments are a ValueError before any store I/O."""
 
 
 def _validate_text(value, what):
-    """Shared argument gate, raised before any store I/O. Newlines are
-    rejected in every value (uniform contract) even though the stdin
-    pipe could carry them on Linux: a secret that only round-trips on
-    some platforms is a trap."""
+    """Newlines are rejected on every platform even though Linux's pipe
+    could carry them: a secret that only round-trips somewhere is a trap."""
     if not isinstance(value, str) or not value:
         raise ValueError(f"{what} must be a non-empty string")
     if "\x00" in value or "\r" in value or "\n" in value:
@@ -86,16 +67,15 @@ def _linux_get(name):
     r = _run(["secret-tool", "lookup", "service", name])
     if r.returncode == 0:
         return r.stdout  # the secret, verbatim
-    # lookup exits 1 quietly when nothing matches; stderr means the store
-    # itself failed (no Secret Service on D-Bus, locked, ...)
+    # a quiet exit 1 is "not found"; stderr means the store itself failed
     if r.stderr.strip():
         raise SecretStoreError(f"secret-tool lookup failed: {r.stderr.strip()}")
     return None
 
 
 def _linux_set(name, secret, label, _account):
-    # secret-tool has no update, so a set is clear-then-store (two calls,
-    # not atomic); clear also removes any duplicates from earlier doubles
+    # no update in secret-tool: clear-then-store, not atomic; the clear
+    # also removes duplicates from earlier double-stores
     r = _run(["secret-tool", "clear", "service", name])
     if r.stderr.strip():
         raise SecretStoreError(f"secret-tool clear failed: {r.stderr.strip()}")
@@ -132,13 +112,9 @@ def _mac_find(name, account=None):
 
 
 def _mac_set(name, secret, label, account):
-    # security takes a password non-interactively only via argv (briefly
-    # visible in the process list) or a terminal prompt -- so the add
-    # command is fed to its interactive mode (-i) over a stdin pipe
-    # instead. The line parser tokenizes on whitespace, so any whitespace
-    # in the payload is a pre-flight ValueError; whatever else it could
-    # mangle is caught by the read-back verify. The security binary is
-    # trusted on items it created, so that verify read does not prompt.
+    # -i over a stdin pipe: argv would leak the secret, a prompt would
+    # block. The -i line parser tokenizes on whitespace, hence the
+    # ValueError; the read-back verify catches anything else it mangles.
     for what, value in (("secret", secret), ("secret name", name),
                         ("label", label), ("account", account)):
         if any(c.isspace() for c in value):
@@ -148,9 +124,8 @@ def _mac_set(name, secret, label, account):
     line = (f"add-generic-password -U -a {account} -s {name} "
             f"-l {label} -w {secret}\n")
     r = _run(["security", "-i"], stdin=line)
-    # -i's exit code is not a reliable verdict, the read-back is; scoped
-    # to our account so verification can never read a different app's
-    # item with the same service name
+    # -i's exit code is not a verdict, the read-back is; it is scoped to
+    # our account and does not prompt on items security itself created
     if _mac_find(name, account) != secret:
         raise SecretStoreError(
             f"macOS Keychain did not store {name!r} correctly (security exit "
@@ -279,8 +254,7 @@ def _win_delete(name):
 
 def _backend():
     """(get, set, delete) for this platform's OS-native store, resolved
-    at call time (tests pin the platform by patching sys.platform). Only
-    consulted once _keychain_available() says the tool is there."""
+    at call time so tests can pin sys.platform."""
     platform = sys.platform
     if platform == "linux":
         return _linux_get, _linux_set, _linux_delete
@@ -293,10 +267,8 @@ def _backend():
 
 
 def _keychain_available():
-    """True when this platform's keychain access tool is at hand: the
-    Credential Manager ships inside Windows itself, Linux needs the
-    secret-tool CLI and macOS the security CLI on PATH. False routes the
-    public API to the auth.json file store instead."""
+    """True when the platform's keychain access tool is at hand (Windows:
+    always); False routes the public API to the auth.json file store."""
     if sys.platform == "win32":
         return True
     tool = {"linux": "secret-tool", "darwin": "security"}.get(sys.platform)
@@ -304,18 +276,13 @@ def _keychain_available():
 
 
 def _file_backend():
-    """The _filestore module, imported lazily so a machine with a keychain
-    never pays for it."""
+    """_filestore, imported lazily: only fallback machines ever import it."""
     from . import _filestore
     return _filestore
 
 
 def get_secret(name):
-    """The secret stored under `name`, or None when nothing is. Reads the
-    OS-native store, or auth.json when this machine has no keychain
-    access tool; raises SecretStoreError when the store itself is
-    unreachable (no Secret Service on D-Bus, keychain error, unreadable
-    auth.json)."""
+    """The secret stored under `name`, or None when nothing is."""
     _validate_text(name, "secret name")
     if _keychain_available():
         get, _, _ = _backend()
@@ -325,18 +292,10 @@ def get_secret(name):
 
 def set_secret(name, secret, *, label=None, account=None):
     """Store `secret` under `name`, replacing anything already stored
-    there. In the keychain backends the secret travels by stdin pipe
-    (Linux, macOS) or in-process (Windows); in the file fallback it is
-    written to auth.json, owner-only. Never through argv or environment.
-
-    `label` is display metadata (default: the name); `account` is
-    macOS/Windows metadata (default: "knowledge-builder"). The file
-    fallback has no metadata slots and drops both. Values a backend
-    cannot carry raise ValueError before any store I/O: null or
-    newline characters everywhere, whitespace on macOS (the security
-    CLI is fed through its stdin command line), and secrets longer than
-    1280 characters on Windows (the credential blob cap).
-    """
+    there. `label` is display metadata (default: the name); `account`
+    is macOS/Windows metadata (default: "knowledge-builder") -- the
+    file fallback has no metadata slots and drops both. Values a
+    backend cannot carry raise ValueError before any store I/O."""
     _validate_text(name, "secret name")
     _validate_text(secret, "secret")
     label = _validate_text(label or name, "label")
