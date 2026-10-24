@@ -54,7 +54,7 @@ def _build_parser():
         help="sampling temperature")
     parser.add_argument(
         "--no-cache", action="store_true",
-        help="skip the response cache for this call")
+        help="skip the response cache (the REPL's /cache re-enables it)")
     return parser
 
 
@@ -127,7 +127,8 @@ def _select(program_config, provider_arg, model_arg, path):
 
 def _repl(llm_config, system, cache):
     history: list[dict] = []
-    print("[llm-cli] one line per message; /new resets, /exit quits",
+    print("[llm-cli] one line per message; /new resets, "
+          "/cache on|off sets the response cache, /exit quits",
           file=sys.stderr)
     while True:
         try:
@@ -143,6 +144,9 @@ def _repl(llm_config, system, cache):
             history.clear()
             print("[llm-cli] conversation reset", file=sys.stderr)
             continue
+        if text.split()[0] == "/cache":
+            cache = _cache_command(text, cache)
+            continue
         history.append({"role": "user", "content": text})
         try:
             reply = llm.chat(history, llm_config, system=system, cache=cache)
@@ -152,6 +156,27 @@ def _repl(llm_config, system, cache):
             continue
         history.append({"role": "assistant", "content": reply})
         print(reply)
+
+
+def _cache_command(text, cache):
+    """Handles /cache: bare reports the state, 'on'/'off' set it; returns
+    the value to pass as chat's cache (None keeps the LLM_CACHE default)."""
+    arg = text.partition(" ")[2].strip().lower()
+    if arg == "on":
+        print("[llm-cli] cache: on", file=sys.stderr)
+        return True
+    if arg == "off":
+        print("[llm-cli] cache: off", file=sys.stderr)
+        return False
+    if arg:
+        print(f"error: /cache takes 'on' or 'off', not {arg!r}",
+              file=sys.stderr)
+    elif cache is None:
+        print("[llm-cli] cache: default (on unless LLM_CACHE=0)",
+              file=sys.stderr)
+    else:
+        print(f"[llm-cli] cache: {'on' if cache else 'off'}", file=sys.stderr)
+    return cache
 
 
 if __name__ == "__main__":

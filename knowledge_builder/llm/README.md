@@ -81,9 +81,18 @@ the same model name on two servers never shares an entry. The API key
 is deliberately excluded from the key and never written to disk.
 
 - Toggle per call: `chat(..., cache=False)`; or globally: `LLM_CACHE=0`.
-- Location: `LLM_CACHE_DIR`, default `.cache/` next to `_client.py`
-  (gitignored). Only `clear_cache()` and cache writes touch this
-  directory, and only files this stack wrote (`<64-hex>.json`).
+- Location: `LLM_CACHE_DIR`, else the per-user cache directory for the
+  platform -- never inside the program directory:
+
+  | Platform | Default cache directory |
+  | --- | --- |
+  | Linux, BSDs, ... | `$XDG_CACHE_HOME/knowledge-builder-ai/llm`, default `~/.cache/knowledge-builder-ai/llm` |
+  | macOS | `~/Library/Caches/knowledge-builder-ai/llm` |
+  | Windows | `%LOCALAPPDATA%\knowledge-builder-ai\cache\llm` |
+
+  The directory is created on first write; reads never create it. Only
+  `clear_cache()` and cache writes touch this directory, and only files
+  this stack wrote (`<64-hex>.json`).
 
 ## The `max_completion_tokens` caveat
 

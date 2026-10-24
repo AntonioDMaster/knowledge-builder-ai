@@ -425,6 +425,82 @@ def test_clear_cache_scoped(monkeypatch):
     assert llm.clear_cache() == 0  # idempotent
 
 
+def test_cache_dir_env_overrides_default(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("HOME", "/home/user")
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.setenv("LLM_CACHE_DIR", "/scratch/cache")
+    assert _client._cache_dir() == "/scratch/cache"
+    monkeypatch.setenv("LLM_CACHE_DIR", "")  # empty counts as unset
+    assert _client._cache_dir() == "/home/user/.cache/knowledge-builder-ai/llm"
+
+
+def test_cache_dir_linux_default(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("HOME", "/home/user")
+    monkeypatch.delenv("LLM_CACHE_DIR")
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    assert _client._cache_dir() == "/home/user/.cache/knowledge-builder-ai/llm"
+    monkeypatch.setenv("XDG_CACHE_HOME", "/xdg")  # absolute override wins
+    assert _client._cache_dir() == "/xdg/knowledge-builder-ai/llm"
+    monkeypatch.setenv("XDG_CACHE_HOME", "relative")  # XDG: relative ignored
+    assert _client._cache_dir() == "/home/user/.cache/knowledge-builder-ai/llm"
+
+
+def test_cache_dir_darwin_default(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setenv("HOME", "/Users/u")
+    monkeypatch.delenv("LLM_CACHE_DIR")
+    assert _client._cache_dir() == "/Users/u/Library/Caches/knowledge-builder-ai/llm"
+
+
+def test_cache_dir_windows_localappdata(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", "C:/Users/u/AppData/Local")
+    monkeypatch.delenv("LLM_CACHE_DIR")
+    assert _client._cache_dir() == \
+        "C:/Users/u/AppData/Local/knowledge-builder-ai/cache/llm"
+
+
+def test_cache_dir_windows_home_fallback(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delenv("LLM_CACHE_DIR")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    assert _client._cache_dir() == os.path.join(
+        os.path.expanduser("~"), "AppData", "Local",
+        "knowledge-builder-ai", "cache", "llm")
+
+
+def test_cache_dir_default_never_in_the_package(monkeypatch):
+    monkeypatch.setenv("HOME", "/home/user")
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    package_dir = os.path.dirname(_client.__file__)
+    for platform in ("linux", "darwin", "win32"):
+        monkeypatch.setattr(sys, "platform", platform)
+        assert not _client._cache_dir().startswith(package_dir)
+
+
+def test_cache_writes_default_per_user_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("LLM_CACHE_DIR")
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+
+    rec = _Recorder([_ok("v1")])
+    monkeypatch.setattr(urllib.request, "urlopen", rec)
+    assert llm.call_llm("p", CFG) == "v1"
+
+    entries = list((tmp_path / ".cache" / "knowledge-builder-ai" / "llm")
+                   .glob("*.json"))
+    assert len(entries) == 1  # the dir is created lazily by the write
+
+    rec2 = _Recorder([])  # second call is served from that directory
+    monkeypatch.setattr(urllib.request, "urlopen", rec2)
+    assert llm.call_llm("p", CFG) == "v1"
+    assert rec2.requests == []
+
+
 # ------------------------------------------------------------ plumbing
 
 

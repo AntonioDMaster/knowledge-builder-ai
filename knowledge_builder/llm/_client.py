@@ -1,7 +1,7 @@
-"""LLM connection core: LLMConfig, chat/call_llm, and the response cache.
-One stdlib urllib POST to any OpenAI-compatible endpoint. The only env
-vars read are the cache toggles LLM_CACHE / LLM_CACHE_DIR; see README.md.
-"""
+"""LLMConfig, chat/call_llm, and the response cache: one stdlib urllib
+POST to an OpenAI-compatible endpoint. Only cache-related env vars are
+read (LLM_CACHE, LLM_CACHE_DIR, XDG_CACHE_HOME, LOCALAPPDATA); see
+README.md."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import urllib.error
 import urllib.request
 
@@ -21,8 +22,9 @@ __all__ = [
     "clear_cache",
 ]
 
-# cache files written by this module: <64 hex chars>.json
 _HEX64_FILE_RE = re.compile(r"^[0-9a-f]{64}\.json$")
+
+_APP_DIR = "knowledge-builder-ai"
 
 
 class LLMError(RuntimeError):
@@ -42,9 +44,7 @@ def _positive_int(raw, field):
 
 @dataclasses.dataclass(frozen=True)
 class LLMConfig:
-    """Connection + generation parameters for one call, built and owned by
-    the calling app: this stack ships no default base_url/model and reads
-    no env vars for them."""
+    """Owned by the calling app: no default base_url/model, no env reads."""
 
     base_url: str
     model: str
@@ -91,7 +91,7 @@ class LLMConfig:
 
     @classmethod
     def from_dict(cls, data):
-        """Build from a plain mapping; unknown keys (app extras) are ignored."""
+        """Unknown keys (app extras) are ignored."""
         names = {f.name for f in dataclasses.fields(cls)}
         return cls(**{k: v for k, v in dict(data).items() if k in names})
 
@@ -113,8 +113,23 @@ def _cache_enabled(cache):
 
 
 def _cache_dir():
-    return os.environ.get("LLM_CACHE_DIR",
-                          os.path.join(os.path.dirname(__file__), ".cache"))
+    return os.environ.get("LLM_CACHE_DIR") or _default_cache_dir()
+
+
+def _default_cache_dir():
+    """Resolved at call time so tests can pin sys.platform. Never inside the
+    program directory: an installed package tree is not user-writable."""
+    if sys.platform == "win32":
+        base = (os.environ.get("LOCALAPPDATA")
+                or os.path.join("~", "AppData", "Local"))
+        return os.path.join(os.path.expanduser(base), _APP_DIR, "cache", "llm")
+    if sys.platform == "darwin":
+        base = os.path.join("~", "Library", "Caches")
+    else:
+        # XDG spec: a relative XDG_CACHE_HOME is ignored, not joined
+        xdg = os.environ.get("XDG_CACHE_HOME", "")
+        base = xdg if os.path.isabs(xdg) else os.path.join("~", ".cache")
+    return os.path.join(os.path.expanduser(base), _APP_DIR, "llm")
 
 
 def _cache_key(config, messages):
@@ -191,8 +206,7 @@ def _post(config, payload):
 
 
 def chat(messages, config, *, system=None, cache=None):
-    """One chat completion. `messages` is a prompt string or a list of
-    message dicts; `cache` overrides the LLM_CACHE default."""
+    """One completion; `messages` is a prompt string or a list of message dicts."""
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
     msgs = ([{"role": "system", "content": system}] if system else []) + list(messages)
@@ -223,8 +237,7 @@ def call_llm(prompt, config, **kwargs):
 
 
 def clear_cache():
-    """Delete this module's <64-hex>.json cache files; anything else in
-    the directory survives. Returns the count."""
+    """Delete only this module's <64-hex>.json files; returns the count."""
     directory = _cache_dir()
     try:
         names = os.listdir(directory)

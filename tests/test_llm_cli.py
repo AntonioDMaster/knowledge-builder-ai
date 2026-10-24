@@ -414,6 +414,57 @@ def test_repl_keyboard_interrupt_is_130(cfgfile, monkeypatch):
     assert llm_cli.main([]) == 130
 
 
+def test_repl_cache_command_off_and_on(cfgfile, capsys, monkeypatch):
+    _write_config(cfgfile, providers={"alpha": _provider()})
+    rec = _Recorder([_ok("a1"), _ok("a2")])
+    monkeypatch.setattr(urllib.request, "urlopen", rec)
+    monkeypatch.setattr("builtins.input", _fake_input([
+        "q1", "/cache off", "/new", "q1", "/cache on", "/new", "q1", "/exit"]))
+
+    assert llm_cli.main([]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == "a1\na2\na1\n"
+    assert "[llm-cli] cache: off" in captured.err
+    assert "[llm-cli] cache: on" in captured.err
+    # only the off-turn hit the wire; the last identical turn was a cache hit
+    assert len(rec.requests) == 2
+
+
+def test_repl_cache_status_and_bad_argument(cfgfile, capsys, monkeypatch):
+    _write_config(cfgfile, providers={"alpha": _provider()})
+    rec = _Recorder([])  # any network call fails the test
+    monkeypatch.setattr(urllib.request, "urlopen", rec)
+    monkeypatch.setattr("builtins.input", _fake_input([
+        "/cache", "/cache maybe", "/cache", "/cache off", "/cache", "/exit"]))
+
+    assert llm_cli.main([]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.count("cache: default") == 2  # the bad arg changed nothing
+    assert "[llm-cli] cache: off" in captured.err
+    assert "takes 'on' or 'off', not 'maybe'" in captured.err
+    assert "/cache on|off" in captured.err  # the banner lists the command
+    assert rec.requests == []
+
+
+def test_repl_cache_on_overrides_the_no_cache_flag(cfgfile, capsys,
+                                                   monkeypatch):
+    _write_config(cfgfile, providers={"alpha": _provider()})
+    rec = _Recorder([_ok("a1")])
+    monkeypatch.setattr(urllib.request, "urlopen", rec)
+    monkeypatch.setattr("builtins.input", _fake_input([
+        "/cache on", "q1", "/new", "q1", "/exit"]))
+
+    assert llm_cli.main(["--no-cache"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == "a1\na1\n"
+    assert "[llm-cli] cache: on" in captured.err
+    assert len(rec.requests) == 1  # the second identical turn came from the cache
+
+
 # ----------------------------------------------------------------- secrets
 
 def test_missing_secret_names_the_seed_command(cfgfile, capsys, monkeypatch):

@@ -1,7 +1,5 @@
-"""Prompt plumbing around `_client.py`: read/fill prompt files, extract
-fenced json/yaml/mermaid blocks, retry structured calls on bad replies.
-PyYAML is optional (imported lazily); the project stays stdlib-only.
-"""
+"""Prompt plumbing around _client.py. PyYAML is optional (imported
+lazily); the project stays stdlib-only."""
 
 from __future__ import annotations
 
@@ -73,17 +71,16 @@ def _yaml():
 
 
 def parse_yaml(text):
-    """Extract and parse a ```yaml fenced block. Raises so a bad reply retries."""
+    """Raises on a missing fence or bad YAML so yaml_call can retry."""
     m = re.search(r"```yaml\s*\n(.*?)```", text, re.DOTALL)
     assert m, f"LLM response missing ```yaml fence. Got:\n{text[:500]}"
     return _yaml().safe_load(m.group(1))
 
 
 def json_call(prompt, config, normalize=None, retries=4, **chat_kwargs):
-    """Call the model, parse its JSON, validate/normalize. Bad replies
-    retry with a changed prompt tail (which also dodges the response
-    cache); normalize(obj) may raise ValueError/KeyError to force a retry.
-    Network errors are NOT caught -- they belong to the caller."""
+    """Bad replies retry with a changed prompt tail (which also dodges the
+    response cache); normalize(obj) may raise ValueError/KeyError to force
+    a retry. Network errors are NOT caught -- they belong to the caller."""
     last = None
     for k in range(retries):
         tail = "" if k == 0 else (
