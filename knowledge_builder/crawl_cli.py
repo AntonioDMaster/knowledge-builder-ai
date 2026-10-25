@@ -1,7 +1,8 @@
-"""CLI entry point: knowledge-builder <crawl_target_path> [<output_file_path>]
+"""CLI entry point: python -m knowledge_builder.crawl_cli <crawl_target_path> [<output_file_path>]
 
 Crawls the target directory; prints to stdout, or writes the output file
-when one is given. Stats go to stderr in both modes.
+when one is given. Stats go to stderr in both modes. `-h`/`--help`
+prints this text to stdout; bad usage prints it to stderr and exits 2.
 """
 
 from __future__ import annotations
@@ -13,6 +14,9 @@ from knowledge_builder.crawl import crawl_with_stats
 
 def main(argv: list[str] | None = None) -> None:
     args = sys.argv[1:] if argv is None else argv
+    if "-h" in args or "--help" in args:
+        print(__doc__.strip())  # pyright: ignore[reportOptionalMemberAccess]
+        return
     if not 1 <= len(args) <= 2:
         print(__doc__.strip(), file=sys.stderr)  # pyright: ignore[reportOptionalMemberAccess]
         raise SystemExit(2)
@@ -29,3 +33,7 @@ def main(argv: list[str] | None = None) -> None:
         f"chars={result.char_count} ~tokens={result.token_count}",
         file=sys.stderr,
     )
+
+
+if __name__ == "__main__":
+    main()
