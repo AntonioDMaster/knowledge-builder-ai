@@ -199,10 +199,26 @@ def _post(config, payload):
         raise LLMError(f"Non-JSON response from {config.base_url}: {snippet!r}") from e
 
     try:
-        # .content is None when the model spent the whole budget on reasoning
-        return body["choices"][0]["message"]["content"] or ""
-    except (KeyError, IndexError, TypeError) as e:
+        choice = body["choices"][0]
+        message = choice["message"] or {}
+        content = message.get("content") or ""
+    except (KeyError, IndexError, TypeError, AttributeError) as e:
         raise LLMError(f"Unexpected response shape: {body!r:.500}") from e
+
+    # Seen in the wild: a router answers a moderation-blocked prompt with
+    # HTTP 200 + empty content + finish_reason=content_filter; an unusable ""
+    # would only surface later as a cryptic parse error (or get cached).
+    if choice.get("finish_reason") == "content_filter":
+        raise LLMError(
+            f"Prompt blocked by {config.base_url}: finish_reason=content_filter "
+            "(the provider's moderation layer blocked this request or its "
+            "output)")
+    # content is None when the model spent the whole output budget on
+    # reasoning; an empty reply is never usable by this stack's callers
+    if not content:
+        raise LLMError(f"Empty completion from {config.base_url}: "
+                       f"finish_reason={choice.get('finish_reason')!r}")
+    return content
 
 
 def chat(messages, config, *, system=None, cache=None):

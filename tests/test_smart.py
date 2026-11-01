@@ -277,8 +277,8 @@ def test_large_python_compaction_fast_and_exact():
         if kind == "class":
             assert name in classes, name
         else:
-            cls, _, meth = name.rpartition(".")
-            assert meth and (cls in classes or name == "main"), name
+            cls, _, method = name.rpartition(".")
+            assert method and (cls in classes or name == "main"), name
 
 
 def test_large_python_indexed_names_exist_in_source():

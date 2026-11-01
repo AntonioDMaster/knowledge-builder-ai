@@ -67,8 +67,8 @@ def _run(args):
             "the shipped setup guide with nothing filled in; follow the "
             "directions inside it:\n" + path)
 
-    provider_name, model_name = _select(program_config, args.provider,
-                                        args.model, path)
+    provider_name, model_name = config.select_provider_model(
+        program_config, args.provider, args.model, path)
     print(f"[llm-cli] provider={provider_name} model={model_name}",
           file=sys.stderr)
 
@@ -87,42 +87,6 @@ def _run(args):
         print(llm.call_llm(prompt, llm_config, system=args.system, cache=cache))
         return 0
     return _repl(llm_config, args.system, cache)
-
-
-def _select(program_config, provider_arg, model_arg, path):
-    """(provider_name, model_name) to use; every failure raises
-    ConfigError naming `path`."""
-    lm = program_config.language_models
-    providers = dict(lm.openai_compatible)
-    if lm.ollama is not None:
-        providers["ollama"] = lm.ollama  # reserved name: the block wins
-
-    if not provider_arg and not providers:
-        raise config.ConfigError(
-            "no LLM provider is configured: add an openai_compatible "
-            "provider or an ollama block with available_models to:\n" + path)
-
-    name = provider_arg or next(iter(providers))
-    provider = providers.get(name)
-    if provider is None:
-        available = ", ".join(providers) or "none is configured"
-        raise config.ConfigError(
-            f"no provider {name!r} in the configuration "
-            f"(available: {available}); edit:\n" + path)
-
-    if model_arg:
-        model_name = model_arg
-    elif provider.available_models:
-        model_name = provider.available_models[0].name
-    else:
-        raise config.ConfigError(
-            f"provider {name!r} declares no available_models; edit:\n" + path)
-    if all(m.name != model_name for m in provider.available_models):
-        available = ", ".join(m.name for m in provider.available_models) or "none"
-        raise config.ConfigError(
-            f"provider {name!r} has no model {model_name!r} "
-            f"(available: {available}); edit:\n" + path)
-    return name, model_name
 
 
 def _repl(llm_config, system, cache):

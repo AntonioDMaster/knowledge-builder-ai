@@ -30,7 +30,12 @@ call_llm("ping", config)
 Omitting the config is a `TypeError`; a blank/invalid field is a
 `ValueError` raised at construction, before any network I/O. Runtime
 failures (HTTP errors, timeouts, malformed responses) raise `LLMError`
-(a `RuntimeError` subclass).
+(a `RuntimeError` subclass). A 200 whose completion is unusable is also an
+`LLMError`: `finish_reason=content_filter` (the provider's moderation layer
+blocked the prompt before the model saw it) or an empty `content` (e.g.
+the whole output budget spent on reasoning). An empty reply is never
+returned silently -- every caller parses the text, so it would only
+surface later as a confusing parse error.
 
 ### Saving / loading
 

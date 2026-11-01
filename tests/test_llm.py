@@ -326,11 +326,45 @@ def test_non_json_200(monkeypatch):
         llm.call_llm("ping", CFG)
 
 
-def test_content_none_returns_empty(monkeypatch):
-    rec = _Recorder([_raw_ok({"choices": [{"message": {"content": None}}]})])
+def test_content_filter_raises(monkeypatch):
+    # seen from a live router: HTTP 200, empty content, prompt rejected by
+    # the provider's moderation layer -- must not come back as a usable ""
+    rec = _Recorder([_raw_ok({"choices": [
+        {"message": {"content": ""}, "finish_reason": "content_filter"}]})])
     monkeypatch.setattr(urllib.request, "urlopen", rec)
 
-    assert llm.call_llm("ping", CFG) == ""
+    with pytest.raises(llm.LLMError,
+                       match="Prompt blocked by http://localhost:8000/v1: "
+                             ".*content_filter"):
+        llm.call_llm("ping", CFG)
+
+
+def test_content_none_raises(monkeypatch):
+    # the reasoning-budget shape: content is None, finish_reason says why --
+    # an empty reply would only fail later as a cryptic parse error
+    rec = _Recorder([_raw_ok({"choices": [
+        {"message": {"content": None}, "finish_reason": "length"}]})])
+    monkeypatch.setattr(urllib.request, "urlopen", rec)
+
+    with pytest.raises(llm.LLMError,
+                       match="Empty completion from http://localhost:8000/v1: "
+                             "finish_reason='length'"):
+        llm.call_llm("ping", CFG)
+
+
+def test_failed_reply_is_not_cached(monkeypatch):
+    blocked = _raw_ok({"choices": [
+        {"message": {"content": ""}, "finish_reason": "content_filter"}]})
+    rec = _Recorder([blocked, _ok("fine")])
+    monkeypatch.setattr(urllib.request, "urlopen", rec)
+
+    with pytest.raises(llm.LLMError):
+        llm.call_llm("ping", CFG)
+
+    # nothing was written for the blocked reply: the same prompt still hits
+    # the wire instead of replaying a cached empty answer
+    assert llm.call_llm("ping", CFG) == "fine"
+    assert len(rec.requests) == 2
 
 
 def test_unexpected_shape(monkeypatch):
