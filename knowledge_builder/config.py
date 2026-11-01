@@ -51,6 +51,7 @@ __all__ = [
     "llm_config_for",
     "load_config",
     "save_config",
+    "select_provider_model",
 ]
 
 _PKG = "knowledge_builder"
@@ -459,6 +460,51 @@ def save_config(config, path=None):
     path = os.fspath(path) if path is not None else config_file_path()
     _write(path, json.dumps(_as_dict(config), indent=2) + "\n")
     return path
+
+
+# ------------------------------------------------------- provider picking
+
+def select_provider_model(config, provider_name=None, model_name=None,
+                          path=None):
+    """(provider_name, model_name) the app would use: the given names or
+    the defaults -- the first provider in file order (the ollama block
+    appended last, the reserved name winning over a compat key of that
+    name), then that provider's first model. Every failure raises
+    ConfigError naming `path`, defaulting to the conventional config
+    location, so the message points at the file to edit."""
+    if path is None:
+        path = config_file_path()
+    lm = config.language_models
+    providers = dict(lm.openai_compatible)
+    if lm.ollama is not None:
+        providers["ollama"] = lm.ollama  # reserved name: the block wins
+
+    if not provider_name and not providers:
+        raise ConfigError(
+            "no LLM provider is configured: add an openai_compatible "
+            "provider or an ollama block with available_models to:\n" + path)
+
+    name = provider_name or next(iter(providers))
+    provider = providers.get(name)
+    if provider is None:
+        available = ", ".join(providers) or "none is configured"
+        raise ConfigError(
+            f"no provider {name!r} in the configuration "
+            f"(available: {available}); edit:\n" + path)
+
+    if model_name:
+        model = model_name
+    elif provider.available_models:
+        model = provider.available_models[0].name
+    else:
+        raise ConfigError(
+            f"provider {name!r} declares no available_models; edit:\n" + path)
+    if all(m.name != model for m in provider.available_models):
+        available = ", ".join(m.name for m in provider.available_models) or "none"
+        raise ConfigError(
+            f"provider {name!r} has no model {model!r} "
+            f"(available: {available}); edit:\n" + path)
+    return name, model
 
 
 # ------------------------------------------------------- llm + storage glue
