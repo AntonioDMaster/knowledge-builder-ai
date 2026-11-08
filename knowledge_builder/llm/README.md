@@ -74,7 +74,7 @@ call_llm(prompt, replace(config, temperature=0.2))
 | `chat(messages, config, *, system=None, cache=None)` | One completion; `messages` is a prompt string or a list of message dicts |
 | `call_llm(prompt, config, **kwargs)` | Single-turn convenience wrapper |
 | `json_call(prompt, config, normalize=None, retries=4, **kwargs)` | Call, parse JSON, retry on bad replies (`normalize` may reject) |
-| `yaml_call(prompt, config, normalize=None, retries=4, **kwargs)` | Same for fenced YAML replies (needs optional PyYAML) |
+| `yaml_call(prompt, config, normalize=None, retries=4, **kwargs)` | Same for fenced YAML replies (PyYAML) |
 | `read_prompt` / `fill` / `extract_mermaid` / `parse_json` / `parse_yaml` | Prompt-file plumbing shared by workflow code |
 | `clear_cache()` | Delete cached responses; returns the count |
 

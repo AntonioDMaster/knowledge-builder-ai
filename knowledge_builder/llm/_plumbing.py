@@ -1,5 +1,5 @@
-"""Prompt plumbing around _client.py. PyYAML is optional (imported
-lazily); the project stays stdlib-only."""
+"""Prompt plumbing around _client.py. PyYAML is imported lazily, so
+the JSON helpers work without it."""
 
 from __future__ import annotations
 
